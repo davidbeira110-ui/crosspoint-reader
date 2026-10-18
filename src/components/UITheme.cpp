@@ -30,7 +30,9 @@ void UITheme::reload() {
   setTheme(themeType);
 }
 
-bool UITheme::supportsCoverGrid() { return HalMemory::getPsramHeap().totalBytes > 0; }
+// Enabled on every board: without PSRAM the cover cache is skipped and covers
+// are decoded from SD on each repaint (slower, but within the X3's heap).
+bool UITheme::supportsCoverGrid() { return true; }
 
 bool UITheme::hasCoverGridHome() { return SETTINGS.uiTheme == CrossPointSettings::COVER_GRID && supportsCoverGrid(); }
 

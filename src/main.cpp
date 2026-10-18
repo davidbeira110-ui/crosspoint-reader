@@ -715,10 +715,11 @@ void setup() {
     // through to the sleep-wake "resume reader" logic, which fires on stale
     // openEpubPath + lastSleepFromReader from a prior session.
     activityManager.goHome();
-  } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
-             mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
-    // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
-    // crashed (indicated by readerActivityLoadCount > 0)
+  } else if (APP_STATE.openEpubPath.empty() || mappedInputManager.isPressed(MappedInputManager::Button::Back) ||
+             APP_STATE.readerActivityLoadCount > 0) {
+    // Always resume the last book, even if the device slept on the home screen.
+    // Boot to home only if no book was ever opened, Back is held, or the reader
+    // crashed last time (readerActivityLoadCount > 0).
     activityManager.goHome(HomeMenuItem::NONE, needsWakeRefresh);
   } else {
     // Clear app state to avoid getting into a boot loop if the epub doesn't load
@@ -726,7 +727,8 @@ void setup() {
     APP_STATE.openEpubPath = "";
     APP_STATE.readerActivityLoadCount++;
     APP_STATE.saveToFile();
-    activityManager.goToReader(path, allowFastInitialReaderRefresh);
+    // The retained frame is only a valid fast-refresh baseline if it was the reader.
+    activityManager.goToReader(path, allowFastInitialReaderRefresh && APP_STATE.lastSleepFromReader);
   }
 
   if (resume == BootResume::Silent) {

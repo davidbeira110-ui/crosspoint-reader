@@ -82,7 +82,7 @@ SettingsSection sectionFor(const SettingInfo& setting) {
 }
 
 // Device-only action rows added per section, beyond the shared list.
-constexpr size_t EXTRA_ROWS_PER_SECTION = 6;
+constexpr size_t EXTRA_ROWS_PER_SECTION = 12;  // System now also holds the Connectivity rows
 }  // namespace
 
 void SettingsActivity::rebuildSettings() {

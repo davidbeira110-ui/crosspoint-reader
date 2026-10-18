@@ -241,11 +241,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t statusBarBookProgressPercentage = 1;
   uint8_t statusBarProgressBar = HIDE_PROGRESS;
   uint8_t statusBarProgressBarThickness = PROGRESS_BAR_NORMAL;
-  uint8_t statusBarTitle = CHAPTER_TITLE;
+  uint8_t statusBarTitle = HIDE_TITLE;
   uint8_t statusBarBattery = 1;
   uint8_t xtcStatusBarMode = XTC_STATUS_BAR_HIDE;
   // Clock display in status bar (any board whose RTC probe succeeds)
-  uint8_t statusBarClock = STATUS_BAR_CLOCK_HIDE;
+  uint8_t statusBarClock = STATUS_BAR_CLOCK_RIGHT;
   // LEGACY, kept for migration only: quarter-hour UTC offset biased by 48
   // (48 = UTC+0). Superseded by clockTimezone; read once by
   // timezones::activeIndex() when clockTimezone is unset.
@@ -329,7 +329,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Defaults to Disabled so shortcut-based bookmark toggling remains opt-in.
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
   // UI Theme
-  uint8_t uiTheme = LYRA;
+  uint8_t uiTheme = COVER_GRID;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Power button return from footnotes (1 = enabled, 0 = disabled)

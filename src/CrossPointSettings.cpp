@@ -217,6 +217,19 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     }
   }
 
+  // Personal build: apply the cover-grid home and reader status bar once, on
+  // the first boot after flashing. Later changes in Settings are kept.
+  if (doc["personalUiV1"].isNull()) {
+    uiTheme = COVER_GRID;
+    statusBarChapterPageCount = 1;
+    statusBarBookProgressPercentage = 1;
+    statusBarBattery = 1;
+    statusBarClock = STATUS_BAR_CLOCK_RIGHT;
+    statusBarTitle = HIDE_TITLE;
+    hideBatteryPercentage = HIDE_NEVER;
+    needsResave = true;
+  }
+
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);
