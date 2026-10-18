@@ -5,8 +5,8 @@
 #include <I18n.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 #include "MappedInputManager.h"
@@ -158,15 +158,16 @@ void CoverGridHomeUi::draw(UiScreen& screen) {
   const int rowHeight = std::max(1, (body.height - (GRID_ROWS - 1) * rowGap) / GRID_ROWS);
   const int cellWidth = (body.width - (GRID_COLUMNS - 1) * grid.gap) / GRID_COLUMNS;
   const int labelSpace = grid.labelHeight + grid.labelGap + 2 * COVER_CELL_INSET + 8;
-  const int coverHeight = std::max(1, std::min(rowHeight - labelSpace, (cellWidth - 2 * COVER_CELL_INSET - 16) * 3 / 2));
+  const int coverHeight =
+      std::max(1, std::min(rowHeight - labelSpace, (cellWidth - 2 * COVER_CELL_INSET - 16) * 3 / 2));
   grid.coverSize.height = static_cast<int16_t>(coverHeight);
   grid.coverSize.width = static_cast<int16_t>(std::max(1, coverHeight * 2 / 3));
   grid.rowHeight = static_cast<int16_t>(coverHeight + labelSpace);
   noteThumbHeight(coverHeight);
 
   gridBounds = body;
-  gridBounds.height = static_cast<int16_t>(
-      std::min<int>(body.height, GRID_ROWS * grid.rowHeight + (GRID_ROWS - 1) * grid.rowGap));
+  gridBounds.height =
+      static_cast<int16_t>(std::min<int>(body.height, GRID_ROWS * grid.rowHeight + (GRID_ROWS - 1) * grid.rowGap));
   // Center the two rows vertically in the space between title and tabs.
   gridBounds.y = static_cast<int16_t>(body.y + (body.height - gridBounds.height) / 2);
   drawGrid(screen);
@@ -201,9 +202,9 @@ void CoverGridHomeUi::drawTitlePlate(UiScreen& screen, fui::Rect rect) {
   }
   for (int16_t dy = -DIAMOND; dy <= DIAMOND; ++dy) {
     const auto half = static_cast<int16_t>(DIAMOND - std::abs(dy));
-    screen.target().fill(
-        fui::Rect{static_cast<int16_t>(centerX - half), static_cast<int16_t>(ruleY + dy), static_cast<int16_t>(2 * half + 1), 1},
-        ink);
+    screen.target().fill(fui::Rect{static_cast<int16_t>(centerX - half), static_cast<int16_t>(ruleY + dy),
+                                   static_cast<int16_t>(2 * half + 1), 1},
+                         ink);
   }
 }
 
@@ -259,7 +260,9 @@ void CoverGridHomeUi::drawGrid(UiScreen& screen) {
   };
   grid.coverPainterUserData = this;
   grid.coverPainter = [](fui::DrawTarget& target, fui::Rect cover, const fui::CoverGridItem&, uint16_t index,
-                         void* user) { return static_cast<CoverGridHomeUi*>(user)->paintFramedCover(target, cover, index); };
+                         void* user) {
+    return static_cast<CoverGridHomeUi*>(user)->paintFramedCover(target, cover, index);
+  };
   fui::coverGrid(screen.frame(), gridBounds, grid);
 }
 
