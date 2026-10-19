@@ -1,7 +1,9 @@
 #include "LibraryListActivity.h"
 
 #include <BoardConfig.h>
+#include <Epub.h>
 #include <FreeInkUIIcon.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -10,6 +12,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <Utf8.h>
+#include <Xtc.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -24,6 +27,7 @@
 #include "components/icons/headerIcons.h"
 #include "components/icons/listIcons.h"
 #include "components/icons/search32.h"
+#include "components/media/cover-grid.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
 
@@ -33,10 +37,10 @@ namespace {
 constexpr int SIDE_PADDING = 12;
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
-constexpr int RECENT_TAB = 0;
-constexpr int TITLE_TAB = 1;
-constexpr int AUTHOR_TAB = 2;
-constexpr int TAB_SLOTS = AUTHOR_TAB + 1;
+// Two sorts only: Author (the default, grouped by author) and Recent.
+constexpr int AUTHOR_TAB = 0;
+constexpr int RECENT_TAB = 1;
+constexpr int TAB_SLOTS = RECENT_TAB + 1;
 
 constexpr bool isDescending(const library::SortOrder order) {
   return order == library::SortOrder::RecentDesc || order == library::SortOrder::TitleDesc ||
@@ -53,13 +57,11 @@ constexpr bool isAuthorSort(const library::SortOrder order) {
 
 constexpr library::SortOrder orderForTab(const int tab, const uint8_t descendingTabs) {
   const bool descending = (descendingTabs & (1u << tab)) != 0;
-  if (tab == TITLE_TAB) return descending ? library::SortOrder::TitleDesc : library::SortOrder::TitleAsc;
   if (tab == AUTHOR_TAB) return descending ? library::SortOrder::AuthorDesc : library::SortOrder::AuthorAsc;
   return descending ? library::SortOrder::RecentDesc : library::SortOrder::RecentAsc;
 }
 
 const char* tabLabelFor(const int tab) {
-  if (tab == TITLE_TAB) return tr(STR_LIBRARY_TAB_TITLE);
   if (tab == AUTHOR_TAB) return tr(STR_LIBRARY_TAB_AUTHOR);
   return tr(STR_LIBRARY_TAB_RECENT);
 }
@@ -106,6 +108,15 @@ void LibraryListActivity::onEnter() {
   }
   resolvePinned();
 
+  gridView = SETTINGS.libraryGridView != 0;
+  gridCovers = makeUniqueNoThrow<HomeCoverCache>(renderer);
+  if (gridCovers) {
+    gridCovers->begin();
+  } else {
+    LOG_ERR("LIB", "OOM: grid cover cache; list view only");
+    gridView = false;
+  }
+
   // Entered while Confirm was still held (typical when launched from the home
   // menu): ignore its release, or we would open whatever sits at row 0.
   lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
@@ -114,6 +125,7 @@ void LibraryListActivity::onEnter() {
 
 void LibraryListActivity::onExit() {
   index.close();
+  gridCovers.reset();
   Activity::onExit();
 }
 
@@ -729,6 +741,7 @@ bool LibraryListActivity::rowTextFor(const int entry, std::string& title, std::s
 
 bool LibraryListActivity::handleCustomInput() {
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return true;
+  if (gridActive() && generateMissingGridCover()) return true;
 
   if (lockNextConfirmRelease && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     lockNextConfirmRelease = false;
@@ -752,12 +765,12 @@ bool LibraryListActivity::handleButtons() {
   // the freshly opened confirmation and select its default.
   if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, LONG_PRESS_MS)) {
     if (tabsFocused()) {
-      if (!degraded) toggleSortDirection();
+      if (!degraded) toggleGridView();
     } else if (isRecentSort(sortOrder)) {
       showRecentBookOptions(selectedEntry());
     } else if (deleteEligible()) {
       if (count > 0) promptDeleteBook(selectedEntry());
-    } else if (!groupsCollapsed && groupable()) {
+    } else if (!gridActive() && !groupsCollapsed && groupable()) {
       collapseGroups(selectedEntry());
     } else {
       activateIndex(selectedEntry());
@@ -1000,7 +1013,163 @@ void LibraryListActivity::buildScreen(UiScreen& screen) {
     screen.centeredText(message);
     return;
   }
+  if (gridActive() && gridCovers) {
+    buildGrid(screen);
+    return;
+  }
   buildRows(screen);
+}
+
+void LibraryListActivity::toggleGridView() {
+  if (groupsCollapsed) restoreExpandedList();
+  gridView = !gridView && gridCovers != nullptr;
+  SETTINGS.libraryGridView = gridView ? 1 : 0;
+  SETTINGS.saveToFile();
+  gridPageTop = -1;
+  requestUpdate();
+}
+
+bool LibraryListActivity::pathFor(const int entry, std::string& path) {
+  path.clear();
+  if (entry < pinnedCount()) {
+    const auto& books = RECENT_BOOKS.getBooks();
+    if (entry < 0 || entry >= static_cast<int>(books.size())) return false;
+    path = books[static_cast<size_t>(entry)].path;
+    return true;
+  }
+  const uint16_t ordinal = index.ordinalForRow(sortOrder, static_cast<uint16_t>(rowFor(entry)));
+  library::ClixRecord record{};
+  return ordinal != 0xFFFF && index.readRecord(ordinal, record) && index.readPath(record, path);
+}
+
+void LibraryListActivity::resolveGridPage(const int top, const int thumbHeight) {
+  const int count = listCount();
+  uint8_t missing = 0;
+  std::string author;
+  for (int slot = 0; slot < GRID_PAGE; ++slot) {
+    auto& bookPath = gridBookPaths[static_cast<size_t>(slot)];
+    auto& thumbPath = gridThumbPaths[static_cast<size_t>(slot)];
+    auto& title = gridTitles[static_cast<size_t>(slot)];
+    bookPath.clear();
+    thumbPath.clear();
+    title.clear();
+    const int entry = top + slot;
+    if (entry >= count) continue;
+    rowTextFor(entry, title, author);
+    if (!pathFor(entry, bookPath)) continue;
+    // Constructors only derive cache paths; parsing happens on generation.
+    if (FsHelpers::hasReflowableBookExtension(bookPath)) {
+      auto epub = makeUniqueNoThrow<Epub>(bookPath, "/.crosspoint");
+      if (epub) thumbPath = epub->getThumbBmpPath(thumbHeight);
+    } else if (FsHelpers::hasXtcExtension(bookPath)) {
+      auto xtc = makeUniqueNoThrow<Xtc>(bookPath, "/.crosspoint");
+      if (xtc) thumbPath = xtc->getThumbBmpPath(thumbHeight);
+    }
+    const bool failed = std::find(gridFailed.begin(), gridFailed.end(), bookPath) != gridFailed.end();
+    if (!thumbPath.empty() && !failed && !Storage.exists(thumbPath.c_str()))
+      missing |= static_cast<uint8_t>(1u << slot);
+  }
+  gridMissing.store(missing, std::memory_order_release);
+}
+
+bool LibraryListActivity::generateMissingGridCover() {
+  const uint8_t missing = gridMissing.load(std::memory_order_acquire);
+  if (missing == 0) return false;
+  RenderLock lock(*this);
+  int slot = 0;
+  while (slot < GRID_PAGE && (missing & (1u << slot)) == 0) ++slot;
+  if (slot >= GRID_PAGE) return false;
+  const std::string bookPath = gridBookPaths[static_cast<size_t>(slot)];
+  const int height = gridThumbHeight;
+  gridMissing.store(static_cast<uint8_t>(missing & ~(1u << slot)), std::memory_order_release);
+  if (bookPath.empty() || height <= 0) return true;
+
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  bool ok = false;
+  if (FsHelpers::hasReflowableBookExtension(bookPath)) {
+    auto epub = makeUniqueNoThrow<Epub>(bookPath, "/.crosspoint");
+    ok = epub && epub->generateThumbBmpFromSource(height);
+  } else if (FsHelpers::hasXtcExtension(bookPath)) {
+    auto xtc = makeUniqueNoThrow<Xtc>(bookPath, "/.crosspoint");
+    ok = xtc && xtc->load() && xtc->generateThumbBmp(height);
+  }
+  if (!ok) gridFailed.push_back(bookPath);
+  if (gridCovers) gridCovers->invalidate(static_cast<size_t>(slot));
+  requestUpdate();
+  return true;
+}
+
+void LibraryListActivity::buildGrid(UiScreen& screen) {
+  const auto& theme = screen.theme();
+  auto& nav = activeNav();
+  const int count = listCount();
+  const int selected = tabsFocused() ? -1 : selectedEntry();
+  const int top = selected >= 0 ? (selected / GRID_PAGE) * GRID_PAGE : (nav.top / GRID_PAGE) * GRID_PAGE;
+  nav.top = top;
+  nav.visibleRows = GRID_PAGE;
+  nav.drawnRows = std::min(GRID_PAGE, count - top);
+
+  const fui::Rect body = screen.body().inset(fui::Insets{theme.spaceSm, SIDE_PADDING, 0, SIDE_PADDING});
+  fui::CoverGridProps grid;
+  grid.columns = GRID_COLUMNS;
+  grid.columnLayout = fui::CoverGridColumnLayout::EqualWidth;
+  grid.count = static_cast<uint16_t>(count);
+  grid.topIndex = static_cast<uint16_t>(top);
+  grid.selectedIndex = static_cast<int16_t>(selected);
+  grid.action = ACTION_ROW;
+  grid.inputMask = fui::InputTouch | fui::InputLongPress;
+  grid.selectionIndicator = fui::CoverGridSelectionIndicator::CoverFrame;
+  grid.selectedCoverFrameGap = 5;
+  grid.selectedCoverFrameWidth = 5;
+  grid.cellStyles = theme.listRow;
+  grid.cellStyles.selected.background = fui::Paint::none();
+  grid.cellStyles.selected.border = fui::Paint::solid(fui::Color::Black);
+  grid.cellStyles.selected.foreground = fui::Paint::solid(fui::Color::Black);
+  grid.cellStyles.active = grid.cellStyles.selected;
+  grid.scrollIndicator = false;
+  grid.titleText = theme.smallText;
+  grid.titleText.maxLines = 1;
+  grid.labelAlign = fui::TextAlign::Center;
+  grid.labelHeight = screen.target().lineHeight(grid.titleText.font);
+  grid.labelGap = 8;
+  grid.labelFollowsCover = true;
+  grid.gap = static_cast<int16_t>(std::max<int>(8, body.width / 16));
+  grid.rowGap = theme.spaceSm;
+  constexpr int16_t CELL_INSET = 8;  // room for the selection ring
+  grid.cellInset = fui::Insets{CELL_INSET, CELL_INSET, CELL_INSET, CELL_INSET};
+  const int rowHeight = (body.height - (GRID_ROWS - 1) * grid.rowGap) / GRID_ROWS;
+  const int cellWidth = (body.width - (GRID_COLUMNS - 1) * grid.gap) / GRID_COLUMNS;
+  const int labelSpace = grid.labelHeight + grid.labelGap + 2 * CELL_INSET;
+  const int coverHeight = std::max(1, std::min(rowHeight - labelSpace, (cellWidth - 2 * CELL_INSET) * 3 / 2));
+  grid.coverSize = fui::Size{static_cast<int16_t>(coverHeight * 2 / 3), static_cast<int16_t>(coverHeight)};
+  grid.rowHeight = static_cast<int16_t>(coverHeight + labelSpace);
+
+  // Paths are resolved once per page (and per thumb size), not per paint.
+  const int sortKey = static_cast<int>(sortOrder);
+  if (top != gridPageTop || coverHeight != gridThumbHeight || sortKey != gridPageSort) {
+    gridThumbHeight = coverHeight;
+    gridPageTop = top;
+    gridPageSort = sortKey;
+    resolveGridPage(top, coverHeight);
+    gridCovers->invalidate();
+  }
+
+  grid.itemProviderUserData = this;
+  grid.itemProvider = [](uint16_t i, void* user) {
+    auto& self = *static_cast<LibraryListActivity*>(user);
+    const int slot = static_cast<int>(i) - self.gridPageTop;
+    const char* title = slot >= 0 && slot < GRID_PAGE ? self.gridTitles[static_cast<size_t>(slot)].c_str() : nullptr;
+    return fui::coverGridItem(title, i);
+  };
+  grid.coverPainterUserData = this;
+  grid.coverPainter = [](fui::DrawTarget&, fui::Rect rect, const fui::CoverGridItem&, uint16_t i, void* user) {
+    auto& self = *static_cast<LibraryListActivity*>(user);
+    const int slot = static_cast<int>(i) - self.gridPageTop;
+    if (slot < 0 || slot >= GRID_PAGE) return false;
+    // Missing thumbs paint the placeholder until generation fills them in.
+    return self.gridCovers->paint(rect, static_cast<size_t>(slot), self.gridThumbPaths[static_cast<size_t>(slot)]);
+  };
+  fui::coverGrid(screen.frame(), body, grid);
 }
 
 // "12/69 books" at the bottom right: which book is selected, out of how many.
@@ -1035,12 +1204,12 @@ void LibraryListActivity::drawHoldHelp() const {
   if (mappedInput.hasTouch() || groupsCollapsed) return;
   const char* help = nullptr;
   if (tabsFocused() && !degraded)
-    help = tr(STR_LIBRARY_HOLD_SORT);
+    help = gridView ? tr(STR_LIBRARY_HOLD_LIST) : tr(STR_LIBRARY_HOLD_GRID);
   else if (!tabsFocused() && isRecentSort(sortOrder) && listCount() > 0)
     help = tr(STR_LIBRARY_HOLD_OPTIONS);  // recent rows: hold opens the row menu
   else if (!tabsFocused() && deleteEligible() && listCount() > 0)
     help = tr(STR_HOLD_OPEN_TO_DELETE);
-  else if (!tabsFocused() && groupable())
+  else if (!tabsFocused() && groupable() && !gridActive())
     help = tr(STR_LIBRARY_HOLD_GROUPS);
   if (!help) return;
 

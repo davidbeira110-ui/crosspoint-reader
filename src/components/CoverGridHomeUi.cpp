@@ -137,40 +137,65 @@ void CoverGridHomeUi::draw(UiScreen& screen) {
     drawHeaderBand();
     return;
   }
-  // Classic layout: a centered title plate with an ornamental rule, then two
-  // rows of two large covers with their titles set beneath.
+  // Classic layout: a title plate, then the book being read as one large
+  // cover with its title, author, and progress set beneath like a title page.
   const int16_t titleHeight = screen.target().lineHeight(theme.titleText.font);
   drawTitlePlate(screen, screen.takeTop(static_cast<int16_t>(titleHeight + TITLE_ORNAMENT_HEIGHT), theme.spaceSm));
 
+  const auto& book = books->front();
+  auto bookTitle = theme.bodyText;
+  bookTitle.bold = true;
+  bookTitle.align = fui::TextAlign::Center;
+  bookTitle.maxLines = 2;
+  auto byline = theme.smallText;
+  byline.align = fui::TextAlign::Center;
+  const int16_t bodyLine = screen.target().lineHeight(bookTitle.font);
+  const int16_t smallLine = screen.target().lineHeight(byline.font);
+  constexpr int16_t PROGRESS_BAR_HEIGHT = 4;
+  const int16_t textBlock = static_cast<int16_t>(2 * bodyLine + smallLine + theme.spaceSm * 3 + PROGRESS_BAR_HEIGHT +
+                                                 smallLine + theme.spaceSm);
+  const auto textRect = screen.takeBottom(textBlock, theme.spaceSm);
+
   const fui::Rect body = screen.body();
-  const int rowGap = std::max<int>(theme.spaceSm, body.height / 40);
-  grid.gap = static_cast<int16_t>(std::max<int>(8, body.width / 20));
-  grid.rowGap = static_cast<int16_t>(rowGap);
+  grid.gap = 0;
+  grid.rowGap = 0;
   grid.cellInset = fui::Insets{COVER_CELL_INSET, COVER_CELL_INSET, COVER_CELL_INSET, COVER_CELL_INSET};
-  grid.titleText = theme.smallText;
-  grid.titleText.align = fui::TextAlign::Center;
-  grid.titleText.maxLines = 1;
-  grid.labelHeight = screen.target().lineHeight(grid.titleText.font);
-  grid.labelGap = 6;
-  grid.labelFollowsCover = true;
-  // Fit a 2:3 cover in both the row (minus its label) and the column. The
-  // selection ring needs room on every side, hence the fixed reserves.
-  const int rowHeight = std::max(1, (body.height - (GRID_ROWS - 1) * rowGap) / GRID_ROWS);
-  const int cellWidth = (body.width - (GRID_COLUMNS - 1) * grid.gap) / GRID_COLUMNS;
-  const int labelSpace = grid.labelHeight + grid.labelGap + 2 * COVER_CELL_INSET + 8;
-  const int coverHeight =
-      std::max(1, std::min(rowHeight - labelSpace, (cellWidth - 2 * COVER_CELL_INSET - 16) * 3 / 2));
+  grid.labelHeight = 0;
+  grid.labelGap = 0;
+  grid.labelFollowsCover = false;
+  // Largest 2:3 cover that fits, with room for the selection ring.
+  const int ring = 2 * COVER_CELL_INSET + 16;
+  const int coverHeight = std::max(1, std::min(body.height - ring, (body.width - ring) * 3 / 2));
   grid.coverSize.height = static_cast<int16_t>(coverHeight);
   grid.coverSize.width = static_cast<int16_t>(std::max(1, coverHeight * 2 / 3));
-  grid.rowHeight = static_cast<int16_t>(coverHeight + labelSpace);
+  grid.rowHeight = static_cast<int16_t>(coverHeight + ring);
   noteThumbHeight(coverHeight);
 
-  gridBounds = body;
-  gridBounds.height =
-      static_cast<int16_t>(std::min<int>(body.height, GRID_ROWS * grid.rowHeight + (GRID_ROWS - 1) * grid.rowGap));
-  // Center the two rows vertically in the space between title and tabs.
-  gridBounds.y = static_cast<int16_t>(body.y + (body.height - gridBounds.height) / 2);
+  const auto gridWidth = static_cast<int16_t>(grid.coverSize.width + ring);
+  gridBounds = fui::Rect{static_cast<int16_t>(body.x + (body.width - gridWidth) / 2),
+                         static_cast<int16_t>(body.y + std::max(0, (body.height - grid.rowHeight) / 2)), gridWidth,
+                         static_cast<int16_t>(std::min<int>(body.height, grid.rowHeight))};
   drawGrid(screen);
+
+  // Title page text: title, author, then a thin progress rule with the percent.
+  int16_t y = static_cast<int16_t>(textRect.y + theme.spaceSm);
+  screen.target().text(fui::Rect{textRect.x, y, textRect.width, static_cast<int16_t>(2 * bodyLine)}, book.title.c_str(),
+                       bookTitle);
+  y = static_cast<int16_t>(y + 2 * bodyLine + theme.spaceSm);
+  if (!book.author.empty()) {
+    screen.target().text(fui::Rect{textRect.x, y, textRect.width, smallLine}, book.author.c_str(), byline);
+  }
+  y = static_cast<int16_t>(y + smallLine + theme.spaceSm * 2);
+  if (progress >= 0) {
+    const auto barWidth = static_cast<int16_t>(std::min<int>(textRect.width * 2 / 3, 260));
+    const auto barX = static_cast<int16_t>(textRect.x + (textRect.width - barWidth) / 2);
+    screen.target().fill(fui::Rect{barX, y, barWidth, 1}, fui::Paint::solid(fui::Color::Black));
+    screen.target().fill(fui::Rect{barX, static_cast<int16_t>(y - 1),
+                                   static_cast<int16_t>(barWidth * std::min(progress, 100) / 100), PROGRESS_BAR_HEIGHT},
+                         fui::Paint::solid(fui::Color::Black));
+    y = static_cast<int16_t>(y + PROGRESS_BAR_HEIGHT + theme.spaceSm);
+    screen.target().text(fui::Rect{textRect.x, y, textRect.width, smallLine}, progressText, byline);
+  }
   drawTabs(screen, fitTabWidth(tabRect.inset(fui::Insets{0, COVER_CELL_INSET, 0, COVER_CELL_INSET})));
   drawHeaderBand();
   (void)landscape;
@@ -182,7 +207,7 @@ void CoverGridHomeUi::drawTitlePlate(UiScreen& screen, fui::Rect rect) {
   title.bold = true;
   title.align = fui::TextAlign::Center;
   const int16_t titleHeight = screen.target().lineHeight(title.font);
-  screen.target().text(fui::Rect{rect.x, rect.y, rect.width, titleHeight}, tr(STR_LIBRARY), title);
+  screen.target().text(fui::Rect{rect.x, rect.y, rect.width, titleHeight}, tr(STR_CONTINUE_READING), title);
 
   // Book-plate ornament: a double rule broken by a small diamond, the way a
   // printed book sets off a chapter heading.
@@ -254,10 +279,7 @@ void CoverGridHomeUi::drawGrid(UiScreen& screen) {
   grid.cellStyles.active = grid.cellStyles.selected;
   grid.scrollIndicator = false;
   grid.itemProviderUserData = this;
-  grid.itemProvider = [](uint16_t index, void* user) {
-    const auto& self = *static_cast<const CoverGridHomeUi*>(user);
-    return fui::coverGridItem((*self.books)[index].title.c_str(), index);
-  };
+  grid.itemProvider = [](uint16_t index, void*) { return fui::coverGridItem(nullptr, index); };
   grid.coverPainterUserData = this;
   grid.coverPainter = [](fui::DrawTarget& target, fui::Rect cover, const fui::CoverGridItem&, uint16_t index,
                          void* user) {

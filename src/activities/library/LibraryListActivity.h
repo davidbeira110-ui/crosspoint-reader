@@ -2,6 +2,8 @@
 
 #include <LibraryIndexFile.h>
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -9,6 +11,7 @@
 
 #include "RecentBooksStore.h"
 #include "activities/UiTabListActivity.h"
+#include "components/HomeCoverCache.h"
 #include "components/OptionPopup.h"
 
 // One Library screen: every indexed book on the card shown by recency, title,
@@ -115,6 +118,36 @@ class LibraryListActivity final : public UiTabListActivity {
   int groupForBook(int bookEntry) const;
   bool groupable() const;
 
+  // --- cover grid view --------------------------------------------------------
+  // The same rows as the list, drawn as a 2x2 page of covers. Hold Confirm on
+  // the sort tabs flips between grid and list; the choice is saved.
+  static constexpr int GRID_COLUMNS = 2;
+  static constexpr int GRID_ROWS = 2;
+  static constexpr int GRID_PAGE = GRID_COLUMNS * GRID_ROWS;
+  bool gridActive() const { return gridView && !groupsCollapsed && query.empty() && !degraded; }
+  void toggleGridView();
+  void buildGrid(UiScreen& screen);
+  // Book path for an entry (pinned store row or index row).
+  bool pathFor(int entry, std::string& path);
+  // Resolve book/thumb paths for the page starting at `top` (render task).
+  void resolveGridPage(int top, int thumbHeight);
+  // Generate one missing thumbnail on the visible page (main task, blocking).
+  // Returns true when it did work.
+  bool generateMissingGridCover();
+
+  bool gridView = true;
+  std::unique_ptr<HomeCoverCache> gridCovers;
+  std::array<std::string, GRID_PAGE> gridBookPaths;
+  std::array<std::string, GRID_PAGE> gridThumbPaths;
+  std::array<std::string, GRID_PAGE> gridTitles;
+  int gridPageTop = -1;
+  int gridPageSort = -1;
+  int gridThumbHeight = 0;
+  // Bit per page slot whose thumbnail is not on the card yet.
+  std::atomic<uint8_t> gridMissing{0};
+  // Books whose cover could not be generated this session; never retried.
+  std::vector<std::string> gridFailed;
+
   // Screen building
   void buildHeader(UiScreen& screen);
   // Materializes ListItems and their strings for the visible window only.
@@ -143,9 +176,9 @@ class LibraryListActivity final : public UiTabListActivity {
 
   library::LibraryIndexFile index;
   int activeTabIndex = 0;
-  library::SortOrder sortOrder = library::SortOrder::RecentDesc;
-  // One bit per tab; Recent starts descending (newest first).
-  uint8_t descendingTabs = 1u << 0;
+  library::SortOrder sortOrder = library::SortOrder::AuthorAsc;
+  // One bit per tab (0 = Author, 1 = Recent); Recent starts newest first.
+  uint8_t descendingTabs = 1u << 1;
   // Set when the walk finished but the sort did not, so the screen can say the
   // order is discovery order rather than silently showing a wrong one.
   bool degraded = false;

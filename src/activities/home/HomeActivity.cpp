@@ -244,7 +244,7 @@ void HomeActivity::onEnter() {
   loadRecentBooks(coverGridUi ? CoverGridHomeUi::MAX_BOOKS : metrics.homeRecentBooksCount);
   hasContinueReading = !recentBooks.empty();
   if (coverGridUi) {
-    fillCoverGridFromLibrary();
+    // Home shows only the book being read, never a library stand-in.
     resolveGridCoverPaths();
     coverGridUi->begin(recentBooks, hasLibrarySlot(), hasContinueReading);
   }

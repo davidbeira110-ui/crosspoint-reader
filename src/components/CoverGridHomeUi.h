@@ -14,9 +14,9 @@
 class CoverGridHomeUi final : public UiAppHost {
  public:
   static constexpr int THUMB_HEIGHT = 400;
-  // Classic 2x2 library: four large covers, most recent first, no hero card.
-  static constexpr int GRID_COLUMNS = 2;
-  static constexpr int GRID_ROWS = 2;
+  // Home shows only the book being read; the cover grid lives in the Library.
+  static constexpr int GRID_COLUMNS = 1;
+  static constexpr int GRID_ROWS = 1;
   static constexpr int MAX_BOOKS = GRID_COLUMNS * GRID_ROWS;
   static_assert(MAX_BOOKS <= HomeCoverCache::MAX_COVERS);
   explicit CoverGridHomeUi(GfxRenderer& renderer);
