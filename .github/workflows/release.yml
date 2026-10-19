@@ -53,7 +53,8 @@ jobs:
           if [ "${{ github.event.release.prerelease }}" = "true" ]; then
             test "$version" = "${configured_version}rc"
           else
-            test "$version" = "$configured_version"
+            # Personal builds: allow suffixed tags like v1.6.5-classic2.
+            case "$version" in "$configured_version"|"$configured_version"-*) ;; *) exit 1 ;; esac
           fi
 
       - uses: actions/setup-python@v6
