@@ -1,0 +1,67 @@
+name: Personal X3 Release
+
+# Every push to master builds the X3/X4 firmware and publishes it as a release
+# with a plain .bin asset, so the device can be updated from the SD card.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-x3-release
+  cancel-in-progress: true
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO Core
+        run: |
+          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
+            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
+            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
+            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
+
+      - name: Pin pioarduino core inside the platform penv
+        run: |
+          set -euo pipefail
+          pio pkg install -e gh_release
+          uv pip install --python ~/.platformio/penv/bin/python "pioarduino==6.1.19"
+
+      - name: Build firmware
+        run: pio run -e gh_release -j1
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n="${{ github.run_number }}"
+          tag="x3-build-${n}"
+          asset="crosspoint-x3-build${n}.bin"
+          cp .pio/build/gh_release/firmware.bin "$asset"
+          gh release create "$tag" "$asset" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "X3 build ${n}" \
+            --notes "Firmware for the Xteink X3. Download ${asset}, copy it to the top level of the SD card, then use Settings > SD firmware update. Commit: ${{ github.sha }}" \
+            --latest
