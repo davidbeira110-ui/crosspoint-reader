@@ -93,6 +93,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["frontButtonRight"] = frontButtonRight;
   // Marks the one-time personal UI defaults as applied (see fromJson).
   doc["personalUiV1"] = 1;
+  doc["personalUiV2"] = 1;
   doc["libraryGridView"] = libraryGridView;
   // Font family and size — both use dynamic getter/setters in SettingsList (the
   // option lists depend on the SD font registry), so the generic loop skips them.
@@ -233,6 +234,19 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     needsResave = true;
   }
 
+  // Personal build, round 2: airy book-style page (applied once).
+  if (doc["personalUiV2"].isNull()) {
+    lineSpacing = WIDE;
+    screenMargin = 20;
+    extraParagraphSpacing = 1;
+    paragraphIndentSpaces = 2;
+    paragraphAlignment = BOOK_STYLE;
+    hyphenationEnabled = 0;
+    textAntiAliasing = 1;
+    statusBarTitle = CHAPTER_TITLE;
+    needsResave = true;
+  }
+
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);
@@ -362,16 +376,18 @@ float CrossPointSettings::getReaderLineCompression() const {
   // 12pt in portrait (~760px viewport) this scale spans ~26/24/19/15 lines
   // per page — each step reads as a clearly different density.
   if (sdFontFamilyName[0] != '\0') {
+    // Personal scale: 100 / 115 / 130 / 150 %. At 1.0 some SD faces (Libron)
+    // set ascenders against the previous line's descenders.
     switch (lineSpacing) {
       case TIGHT:
-        return 0.95f;
+        return 1.0f;
       case NORMAL:
       default:
-        return 1.0f;
+        return 1.15f;
       case WIDE:
         return 1.3f;
       case EXTRA_WIDE:
-        return 1.6f;
+        return 1.5f;
     }
   }
 
